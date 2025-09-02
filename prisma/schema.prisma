@@ -1,0 +1,112 @@
+// This is your Prisma schema file
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model Client {
+  id                String   @id @default(cuid())
+  email             String   @unique
+  name              String
+  companyName       String
+  tenantId          String   @unique
+  accessToken       String?  // Encrypted
+  refreshToken      String?  // Encrypted
+  tokenExpiry       DateTime?
+  webhookId         String?
+  isActive          Boolean  @default(true)
+  businessContext   Json?    // Store business info, templates, etc.
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  
+  emails            Email[]
+  responseTemplates ResponseTemplate[]
+  
+  @@map("clients")
+}
+
+model Email {
+  id              String   @id @default(cuid())
+  microsoftId     String   @unique // Graph API email ID
+  clientId        String
+  subject         String
+  body            String
+  sender          String
+  senderEmail     String
+  recipients      Json     // Array of recipients
+  threadId        String?
+  receivedAt      DateTime
+  processedAt     DateTime?
+  status          EmailStatus @default(RECEIVED)
+  
+  client          Client   @relation(fields: [clientId], references: [id])
+  aiResponses     AIResponse[]
+  
+  @@map("emails")
+}
+
+model AIResponse {
+  id              String   @id @default(cuid())
+  emailId         String
+  responseContent String
+  confidence      Float?
+  templateUsed    String?
+  status          ResponseStatus @default(DRAFT_CREATED)
+  draftId         String?  // Microsoft Graph draft ID
+  sentAt          DateTime?
+  userModified    Boolean  @default(false)
+  createdAt       DateTime @default(now())
+  
+  email           Email    @relation(fields: [emailId], references: [id])
+  
+  @@map("ai_responses")
+}
+
+model ResponseTemplate {
+  id          String   @id @default(cuid())
+  clientId    String
+  name        String
+  category    String   // e.g., "support", "sales", "general"
+  trigger     String   // Keywords or patterns that trigger this template
+  template    String   // Template with placeholders
+  isActive    Boolean  @default(true)
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  
+  client      Client   @relation(fields: [clientId], references: [id])
+  
+  @@map("response_templates")
+}
+
+model WebhookSubscription {
+  id              String   @id @default(cuid())
+  clientId        String
+  subscriptionId  String   @unique // Microsoft Graph subscription ID
+  resource        String   // e.g., "me/messages"
+  expirationTime  DateTime
+  isActive        Boolean  @default(true)
+  createdAt       DateTime @default(now())
+  
+  @@map("webhook_subscriptions")
+}
+
+enum EmailStatus {
+  RECEIVED
+  PROCESSING
+  AI_RESPONSE_GENERATED
+  DRAFT_CREATED
+  SENT
+  ERROR
+}
+
+enum ResponseStatus {
+  DRAFT_CREATED
+  USER_MODIFIED
+  SENT
+  REJECTED
+}
