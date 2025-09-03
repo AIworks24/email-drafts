@@ -39,5 +39,5 @@ export const optionalAuth = (req: AuthenticatedRequest, res: Response, next: Nex
     }
   }
 
-  next();
+  return next();
 };
