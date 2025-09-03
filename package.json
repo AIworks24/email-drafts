@@ -1,18 +1,20 @@
 {
   "name": "email-drafts",
   "version": "1.0.0",
-  "description": "",
-  "main": "index.js",
+  "description": "AI Email Drafts Agent - Backend",
+  "main": "dist/app.js",
   "scripts": {
     "dev": "nodemon src/app.ts",
-    "build": "tsc",
+    "build": "tsc && prisma generate",
     "start": "node dist/app.js",
+    "vercel-build": "tsc && prisma generate && prisma db push",
     "db:migrate": "prisma migrate dev",
     "db:generate": "prisma generate",
     "db:studio": "prisma studio",
-    "db:reset": "prisma migrate reset"
+    "db:reset": "prisma migrate reset",
+    "postinstall": "prisma generate"
   },
-  "keywords": [],
+  "keywords": ["ai", "email", "microsoft-365", "automation"],
   "author": "",
   "license": "ISC",
   "dependencies": {
