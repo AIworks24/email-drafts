@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { Plus, ExternalLink, CheckCircle, XCircle, RefreshCw, Trash2 } from 'lucide-react';
+import { Plus, ExternalLink, CheckCircle, XCircle, RefreshCw, Trash2, Settings, ToggleLeft, ToggleRight } from 'lucide-react';
 import { clientAPI, authAPI, Client } from '../services/api';
 
 interface ClientManagerProps {
@@ -7,13 +7,27 @@ interface ClientManagerProps {
   onClientSelect: (clientId: string) => void;
 }
 
+interface AISettings {
+  responseStyle: 'professional' | 'casual' | 'concise';
+  responseLength: 'short' | 'medium' | 'detailed';
+  tone: 'formal' | 'friendly' | 'neutral';
+  autoRespond: boolean;
+  requireApproval: boolean;
+  businessHours: {
+    enabled: boolean;
+    start: string;
+    end: string;
+    timezone: string;
+  };
+}
+
 export default function ClientManager({ selectedClientId, onClientSelect }: ClientManagerProps) {
   const [clients, setClients] = useState<Client[]>([]);
   const [loading, setLoading] = useState(false);
   const [showCreateForm, setShowCreateForm] = useState(false);
+  const [showSettingsFor, setShowSettingsFor] = useState<string>('');
   const [authStatus, setAuthStatus] = useState<{[key: string]: any}>({});
 
-  // Form state
   const [formData, setFormData] = useState({
     email: '',
     name: '',
@@ -21,7 +35,20 @@ export default function ClientManager({ selectedClientId, onClientSelect }: Clie
     tenantId: 'common'
   });
 
-  // Load client data on component mount
+  const [aiSettings, setAiSettings] = useState<AISettings>({
+    responseStyle: 'professional',
+    responseLength: 'short',
+    tone: 'friendly',
+    autoRespond: false,
+    requireApproval: true,
+    businessHours: {
+      enabled: false,
+      start: '09:00',
+      end: '17:00',
+      timezone: 'America/New_York'
+    }
+  });
+
   useEffect(() => {
     loadClients();
   }, []);
@@ -29,8 +56,6 @@ export default function ClientManager({ selectedClientId, onClientSelect }: Clie
   const loadClients = async () => {
     setLoading(true);
     try {
-      // For demo purposes, we'll store client IDs in localStorage
-      // In production, you'd fetch from your backend
       const storedClients = localStorage.getItem('demo_clients');
       const clientIds = storedClients ? JSON.parse(storedClients) : [];
       
@@ -55,13 +80,39 @@ export default function ClientManager({ selectedClientId, onClientSelect }: Clie
     }
   };
 
-  const loadAuthStatus = async (clientId: string) => {
+  const toggleAIEnabled = async (clientId: string, enabled: boolean) => {
     try {
-      const status = await authAPI.getStatus(clientId);
-      setAuthStatus(prev => ({ ...prev, [clientId]: status }));
-    } catch (error) {
-      console.error('Failed to load auth status:', error);
-      setAuthStatus(prev => ({ ...prev, [clientId]: { isConnected: false, error: true } }));
+      await clientAPI.updateProfile(clientId, { 
+        businessContext: { aiEnabled: enabled }
+      });
+      
+      setClients(clients.map(client => 
+        client.id === clientId 
+          ? { ...client, businessContext: { ...client.businessContext, aiEnabled: enabled } }
+          : client
+      ));
+    } catch (error: any) {
+      console.error('Failed to toggle AI:', error);
+      alert('Failed to update AI settings');
+    }
+  };
+
+  const updateAISettings = async (clientId: string, settings: AISettings) => {
+    try {
+      await clientAPI.updateProfile(clientId, {
+        businessContext: { aiSettings: settings }
+      });
+      
+      setClients(clients.map(client => 
+        client.id === clientId 
+          ? { ...client, businessContext: { ...client.businessContext, aiSettings: settings } }
+          : client
+      ));
+      
+      setShowSettingsFor('');
+    } catch (error: any) {
+      console.error('Failed to update AI settings:', error);
+      alert('Failed to update AI settings');
     }
   };
 
@@ -70,10 +121,28 @@ export default function ClientManager({ selectedClientId, onClientSelect }: Clie
     setLoading(true);
     
     try {
-      const response = await clientAPI.register(formData);
+      const response = await clientAPI.register({
+        ...formData,
+        businessContext: { 
+          aiEnabled: true,
+          aiSettings: {
+            responseStyle: 'professional',
+            responseLength: 'short',
+            tone: 'friendly',
+            autoRespond: false,
+            requireApproval: true,
+            businessHours: {
+              enabled: false,
+              start: '09:00',
+              end: '17:00',
+              timezone: 'America/New_York'
+            }
+          }
+        }
+      });
+      
       const newClient = response.client;
       
-      // Store client ID for demo
       const storedClients = localStorage.getItem('demo_clients');
       const clientIds = storedClients ? JSON.parse(storedClients) : [];
       clientIds.push(newClient.id);
@@ -95,11 +164,20 @@ export default function ClientManager({ selectedClientId, onClientSelect }: Clie
     try {
       const response = await authAPI.getMicrosoftLoginUrl(clientId);
       window.open(response.authUrl, '_blank');
-      // Refresh auth status after OAuth
       setTimeout(() => loadAuthStatus(clientId), 2000);
     } catch (error: any) {
       console.error('Failed to start OAuth:', error);
       alert(error.response?.data?.error || 'Failed to start OAuth flow');
+    }
+  };
+
+  const loadAuthStatus = async (clientId: string) => {
+    try {
+      const status = await authAPI.getStatus(clientId);
+      setAuthStatus(prev => ({ ...prev, [clientId]: status }));
+    } catch (error) {
+      console.error('Failed to load auth status:', error);
+      setAuthStatus(prev => ({ ...prev, [clientId]: { isConnected: false, error: true } }));
     }
   };
 
@@ -138,7 +216,6 @@ export default function ClientManager({ selectedClientId, onClientSelect }: Clie
   };
 
   useEffect(() => {
-    // Load auth status for all clients
     clients.forEach(client => {
       if (client.hasActiveTokens) {
         loadAuthStatus(client.id);
@@ -148,11 +225,10 @@ export default function ClientManager({ selectedClientId, onClientSelect }: Clie
 
   return (
     <div className="space-y-6">
-      {/* Header */}
       <div className="flex justify-between items-center">
         <div>
           <h2 className="text-2xl font-bold text-gray-900">Client Management</h2>
-          <p className="text-gray-600">Manage your AI email agent clients and their Microsoft 365 connections</p>
+          <p className="text-gray-600">Manage AI email agents for your clients</p>
         </div>
         <button
           onClick={() => setShowCreateForm(!showCreateForm)}
@@ -163,7 +239,6 @@ export default function ClientManager({ selectedClientId, onClientSelect }: Clie
         </button>
       </div>
 
-      {/* Create Client Form */}
       {showCreateForm && (
         <div className="card">
           <h3 className="text-lg font-semibold mb-4">Create New Client</h3>
@@ -226,7 +301,83 @@ export default function ClientManager({ selectedClientId, onClientSelect }: Clie
         </div>
       )}
 
-      {/* Client List */}
+      {showSettingsFor && (
+        <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
+          <div className="bg-white rounded-lg p-6 max-w-2xl w-full mx-4 max-h-96 overflow-y-auto">
+            <h3 className="text-lg font-semibold mb-4">AI Response Settings</h3>
+            
+            <div className="space-y-4">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="label">Response Style</label>
+                  <select
+                    value={aiSettings.responseStyle}
+                    onChange={(e) => setAiSettings({...aiSettings, responseStyle: e.target.value as any})}
+                    className="input-field"
+                  >
+                    <option value="professional">Professional</option>
+                    <option value="casual">Casual</option>
+                    <option value="concise">Concise</option>
+                  </select>
+                </div>
+                <div>
+                  <label className="label">Response Length</label>
+                  <select
+                    value={aiSettings.responseLength}
+                    onChange={(e) => setAiSettings({...aiSettings, responseLength: e.target.value as any})}
+                    className="input-field"
+                  >
+                    <option value="short">Short (1-2 sentences)</option>
+                    <option value="medium">Medium (1 paragraph)</option>
+                    <option value="detailed">Detailed (Multiple paragraphs)</option>
+                  </select>
+                </div>
+              </div>
+              
+              <div>
+                <label className="label">Tone</label>
+                <select
+                  value={aiSettings.tone}
+                  onChange={(e) => setAiSettings({...aiSettings, tone: e.target.value as any})}
+                  className="input-field"
+                >
+                  <option value="formal">Formal</option>
+                  <option value="friendly">Friendly</option>
+                  <option value="neutral">Neutral</option>
+                </select>
+              </div>
+
+              <div className="flex items-center space-x-4">
+                <label className="flex items-center">
+                  <input
+                    type="checkbox"
+                    checked={aiSettings.requireApproval}
+                    onChange={(e) => setAiSettings({...aiSettings, requireApproval: e.target.checked})}
+                    className="mr-2"
+                  />
+                  Always require approval before sending
+                </label>
+              </div>
+            </div>
+            
+            <div className="flex space-x-4 mt-6">
+              <button
+                onClick={() => updateAISettings(showSettingsFor, aiSettings)}
+                className="btn-primary"
+              >
+                Save Settings
+              </button>
+              <button
+                onClick={() => setShowSettingsFor('')}
+                className="btn-secondary"
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
+
       <div className="space-y-4">
         {loading && clients.length === 0 ? (
           <div className="card text-center py-8">
@@ -241,6 +392,7 @@ export default function ClientManager({ selectedClientId, onClientSelect }: Clie
           clients.map((client) => {
             const status = authStatus[client.id];
             const isSelected = client.id === selectedClientId;
+            const aiEnabled = client.businessContext?.aiEnabled ?? true;
             
             return (
               <div
@@ -259,19 +411,61 @@ export default function ClientManager({ selectedClientId, onClientSelect }: Clie
                       ) : (
                         <XCircle className="h-5 w-5 text-red-500" />
                       )}
+                      
+                      <button
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          toggleAIEnabled(client.id, !aiEnabled);
+                        }}
+                        className={`flex items-center space-x-1 px-2 py-1 rounded-full text-xs ${
+                          aiEnabled 
+                            ? 'bg-green-100 text-green-700 hover:bg-green-200' 
+                            : 'bg-gray-100 text-gray-700 hover:bg-gray-200'
+                        }`}
+                        title={`AI is ${aiEnabled ? 'enabled' : 'disabled'}`}
+                      >
+                        {aiEnabled ? (
+                          <ToggleRight className="h-4 w-4" />
+                        ) : (
+                          <ToggleLeft className="h-4 w-4" />
+                        )}
+                        <span>AI {aiEnabled ? 'ON' : 'OFF'}</span>
+                      </button>
                     </div>
                     <p className="text-gray-600">{client.email}</p>
                     <p className="text-sm text-gray-500">{client.companyName}</p>
                     <div className="mt-2 flex items-center space-x-4 text-sm text-gray-500">
                       <span>Created: {new Date(client.createdAt).toLocaleDateString()}</span>
                       <span>Status: {status?.isConnected ? 'Connected' : 'Disconnected'}</span>
-                      {status?.tokenExpired && (
-                        <span className="text-red-500">Token Expired</span>
-                      )}
                     </div>
                   </div>
                   
                   <div className="flex space-x-2">
+                    <button
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        const settings = client.businessContext?.aiSettings || {
+                          responseStyle: 'professional',
+                          responseLength: 'short',
+                          tone: 'friendly',
+                          autoRespond: false,
+                          requireApproval: true,
+                          businessHours: {
+                            enabled: false,
+                            start: '09:00',
+                            end: '17:00',
+                            timezone: 'America/New_York'
+                          }
+                        };
+                        setAiSettings(settings);
+                        setShowSettingsFor(client.id);
+                      }}
+                      className="text-sm bg-gray-100 text-gray-700 px-3 py-1 rounded-md hover:bg-gray-200"
+                      title="AI Settings"
+                    >
+                      <Settings className="h-4 w-4" />
+                    </button>
+
                     {status?.isConnected ? (
                       <>
                         <button
@@ -284,18 +478,6 @@ export default function ClientManager({ selectedClientId, onClientSelect }: Clie
                         >
                           Test
                         </button>
-                        {status?.tokenExpired && (
-                          <button
-                            onClick={(e) => {
-                              e.stopPropagation();
-                              refreshTokens(client.id);
-                            }}
-                            className="text-sm bg-yellow-100 text-yellow-700 px-3 py-1 rounded-md hover:bg-yellow-200"
-                            title="Refresh Tokens"
-                          >
-                            <RefreshCw className="h-4 w-4" />
-                          </button>
-                        )}
                         <button
                           onClick={(e) => {
                             e.stopPropagation();

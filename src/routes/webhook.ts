@@ -1,6 +1,7 @@
 import express from 'express';
 import { microsoftGraphService } from '../services/microsoftGraph';
 import { databaseService } from '../services/database';
+import { claudeAIService } from '../services/claudeAI';
 
 const router = express.Router();
 
@@ -76,9 +77,22 @@ async function processNewEmail(clientId: string, accessToken: string, resourceDa
   try {
     console.log('📨 Processing new email for client:', clientId);
 
+    // Get client workspace settings
+    const client = await databaseService.getClientById(clientId);
+    if (!client || !client.aiEnabled) {
+      console.log('🚫 AI disabled for client:', clientId);
+      return;
+    }
+
     // Get email details from Microsoft Graph
     const emailData = await microsoftGraphService.getEmailById(accessToken, resourceData.id);
     
+    // Skip if email is from the client themselves
+    if (emailData.sender.email === client.email) {
+      console.log('🚫 Skipping auto-response for own email');
+      return;
+    }
+
     // Save email to database
     const savedEmail = await databaseService.saveEmail({
       microsoftId: emailData.id,
@@ -97,12 +111,152 @@ async function processNewEmail(clientId: string, accessToken: string, resourceDa
     // Update email status to processing
     await databaseService.updateEmailStatus(savedEmail.id, 'PROCESSING');
 
-    // TODO: This is where we'll add AI response generation
-    // For now, we'll create a simple auto-response
-    await createSimpleAutoResponse(clientId, accessToken, savedEmail.id, emailData);
+    // Generate AI response using Claude
+    await generateAIResponse(client, savedEmail, emailData, accessToken);
 
   } catch (error) {
     console.error('Error processing new email:', error);
+  }
+}
+
+// Generate AI response using Claude
+async function generateAIResponse(
+  client: any, 
+  savedEmail: any, 
+  emailData: any, 
+  accessToken: string
+) {
+  try {
+    // Build workspace from client data
+    const workspace = {
+      clientId: client.id,
+      businessContext: client.businessContext || {},
+      aiSettings: client.aiSettings || {
+        responseStyle: 'professional',
+        responseLength: 'short',
+        tone: 'friendly',
+        autoRespond: false,
+        requireApproval: true,
+        businessHours: {
+          enabled: false,
+          start: '09:00',
+          end: '17:00',
+          timezone: 'America/New_York'
+        }
+      },
+      templates: await databaseService.getResponseTemplates(client.id)
+    };
+
+    // Build email context
+    const emailContext = {
+      subject: emailData.subject,
+      body: emailData.body,
+      sender: emailData.sender,
+      recipients: emailData.recipients,
+      threadId: emailData.conversationId,
+      receivedAt: emailData.receivedDateTime
+    };
+
+    // Check business hours if enabled
+    if (workspace.aiSettings.businessHours.enabled) {
+      const now = new Date();
+      const isBusinessHours = isWithinBusinessHours(now, workspace.aiSettings.businessHours);
+      if (!isBusinessHours) {
+        console.log('🕒 Outside business hours, skipping AI response');
+        await databaseService.updateEmailStatus(savedEmail.id, 'RECEIVED');
+        return;
+      }
+    }
+
+    console.log('🤖 Generating AI response with Claude...');
+
+    // Generate response using Claude AI
+    const aiResponse = await claudeAIService.generateEmailResponse(workspace, emailContext);
+
+    // Create draft reply in Outlook
+    const draft = await microsoftGraphService.createDraftReply(
+      accessToken,
+      emailData.id,
+      aiResponse.content,
+      `Re: ${emailData.subject}`
+    );
+
+    // Save AI response to database
+    const aiResponseData: {
+      emailId: string;
+      responseContent: string;
+      confidence?: number;
+      templateUsed?: string;
+      draftId?: string;
+    } = {
+      emailId: savedEmail.id,
+      responseContent: aiResponse.content,
+      confidence: aiResponse.confidence,
+      draftId: draft.id,
+    };
+
+    // Only add templateUsed if it's defined
+    if (aiResponse.templateUsed) {
+      aiResponseData.templateUsed = aiResponse.templateUsed;
+    }
+
+    const savedAIResponse = await databaseService.saveAIResponse(aiResponseData);
+
+    // Update email status
+    await databaseService.updateEmailStatus(savedEmail.id, 'DRAFT_CREATED');
+
+    console.log('✅ AI response generated and draft created:', draft.id);
+    console.log('📋 AI response saved:', savedAIResponse.id);
+    console.log('🎯 Confidence:', aiResponse.confidence);
+    console.log('💭 Reasoning:', aiResponse.reasoning);
+
+    // Update usage stats
+    await updateUsageStats(client.id, 'email_processed', 'response_generated');
+
+  } catch (error) {
+    console.error('Error generating AI response:', error);
+    
+    // Update email status to error
+    try {
+      await databaseService.updateEmailStatus(savedEmail.id, 'ERROR');
+    } catch (updateError) {
+      console.error('Error updating email status to ERROR:', updateError);
+    }
+  }
+}
+
+    // Helper function to check business hours
+    function isWithinBusinessHours(
+      date: Date, 
+      businessHours: any
+    ): boolean {
+      try {
+        // Default to allowing if business hours aren't configured
+        if (!businessHours || !businessHours.start || !businessHours.end) {
+          return true;
+        }
+        
+        const hour = date.getHours();
+        const startHour = parseInt(businessHours.start.split(':')[0]);
+        const endHour = parseInt(businessHours.end.split(':')[0]);
+        
+        return hour >= startHour && hour < endHour;
+      } catch (error) {
+        console.error('Error checking business hours:', error);
+        return true; // Default to allowing if there's an error
+      }
+    }
+
+// Helper function to update usage statistics
+async function updateUsageStats(clientId: string, ...events: string[]) {
+  try {
+    const today = new Date().toISOString().split('T')[0];
+    
+    // In a real implementation, you'd update the UsageStats table
+    // For now, just log the events
+    console.log(`📊 Usage stats for ${clientId} on ${today}:`, events);
+  } catch (error) {
+    console.error('Error updating usage stats:', error);
   }
 }
 

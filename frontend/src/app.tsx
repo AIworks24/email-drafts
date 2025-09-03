@@ -1,10 +1,11 @@
 import React, { useState } from 'react';
-import { Users, Mail, Settings, Plus, ExternalLink } from 'lucide-react';
+import { Users, Mail, Settings, BarChart } from 'lucide-react';
 import ClientManager from './components/ClientManager';
 import EmailDashboard from './components/EmailDashboard';
 import TemplateManager from './components/TemplateManager';
+import UsageReporting from './components/UsageReporting';
 
-type Tab = 'clients' | 'emails' | 'templates';
+type Tab = 'clients' | 'emails' | 'templates' | 'reports';
 
 function App() {
   const [activeTab, setActiveTab] = useState<Tab>('clients');
@@ -14,6 +15,7 @@ function App() {
     { id: 'clients' as Tab, name: 'Clients', icon: Users },
     { id: 'emails' as Tab, name: 'Emails', icon: Mail },
     { id: 'templates' as Tab, name: 'Templates', icon: Settings },
+    { id: 'reports' as Tab, name: 'Reports', icon: BarChart },
   ];
 
   return (
@@ -27,7 +29,7 @@ function App() {
               <h1 className="text-2xl font-bold text-gray-900">AI Email Drafts Agent</h1>
             </div>
             <div className="flex items-center space-x-4">
-              <span className="text-sm text-gray-500">Admin Dashboard</span>
+              <span className="text-sm text-gray-500">Service Provider Dashboard</span>
             </div>
           </div>
         </div>
@@ -74,6 +76,11 @@ function App() {
         )}
         {activeTab === 'templates' && (
           <TemplateManager 
+            selectedClientId={selectedClientId}
+          />
+        )}
+        {activeTab === 'reports' && (
+          <UsageReporting 
             selectedClientId={selectedClientId}
           />
         )}
