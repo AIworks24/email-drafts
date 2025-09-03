@@ -6,13 +6,12 @@ interface AuthenticatedRequest extends Request {
   email?: string;
 }
 
-export const authenticateToken = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
+export const authenticateToken = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(' ')[1]; // Bearer TOKEN
 
   if (!token) {
-    res.status(401).json({ error: 'Access token required' });
-    return;
+    return res.status(401).json({ error: 'Access token required' });
   }
 
   try {
@@ -21,12 +20,11 @@ export const authenticateToken = (req: AuthenticatedRequest, res: Response, next
     req.email = decoded.email;
     next();
   } catch (error) {
-    res.status(403).json({ error: 'Invalid or expired token' });
-    return;
+    return res.status(403).json({ error: 'Invalid or expired token' });
   }
 };
 
-export const optionalAuth = (req: AuthenticatedRequest, res: Response, next: NextFunction): void => {
+export const optionalAuth = (req: AuthenticatedRequest, res: Response, next: NextFunction) => {
   const authHeader = req.headers.authorization;
   const token = authHeader && authHeader.split(' ')[1];
 
