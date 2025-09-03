@@ -1,9 +1,8 @@
 import axios from 'axios';
-import { API_BASE_URL } from '../config/api';
 
 const api = axios.create({
-  baseURL: API_BASE_URL,
-  timeout: 30000, // Increased for production
+  baseURL: '/api',
+  timeout: 10000, 
   withCredentials: false, // Set to false for CORS in production
 });
 
