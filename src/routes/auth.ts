@@ -5,6 +5,38 @@ import jwt from 'jsonwebtoken';
 
 const router = express.Router();
 
+// Get app URLs based on environment
+const getAppUrls = () => {
+  const isProduction = process.env.NODE_ENV === 'production';
+  
+  if (isProduction) {
+    // In production, both frontend and backend are served from the same domain
+    const baseUrl = process.env.VERCEL_URL 
+      ? `https://${process.env.VERCEL_URL}`
+      : 'https://your-app-name.vercel.app'; // Update this with your actual Vercel app name
+    
+    return {
+      backend: baseUrl,
+      frontend: baseUrl, // Same URL for monolithic deployment
+    };
+  }
+  
+  // Development/Codespaces
+  const codespaceName = process.env.CODESPACE_NAME;
+  if (codespaceName) {
+    return {
+      backend: `https://${codespaceName}-3000.preview.app.github.dev`,
+      frontend: `https://${codespaceName}-3001.preview.app.github.dev`,
+    };
+  }
+  
+  // Local development
+  return {
+    backend: 'http://localhost:3000',
+    frontend: 'http://localhost:3001',
+  };
+};
+
 // Start OAuth flow
 router.get('/microsoft/login/:clientId', async (req, res): Promise<void> => {
   try {
@@ -35,72 +67,80 @@ router.get('/microsoft/login/:clientId', async (req, res): Promise<void> => {
 router.get('/microsoft/callback', async (req, res): Promise<void> => {
   try {
     const { code, state, error } = req.query;
+    const appUrls = getAppUrls();
 
     if (error) {
-      res.status(400).json({ error: 'Authorization denied', details: error });
+      console.error('OAuth error:', error);
+      res.redirect(`${appUrls.frontend}/?error=${encodeURIComponent(error as string)}`);
       return;
     }
 
     if (!code || !state) {
-      res.status(400).json({ error: 'Missing authorization code or state' });
+      console.error('Missing OAuth parameters');
+      res.redirect(`${appUrls.frontend}/?error=missing_parameters`);
       return;
     }
 
     const clientId = state as string;
 
-    // Exchange code for tokens
-    const tokens = await microsoftGraphService.exchangeCodeForTokens(code as string);
-    
-    // Get user profile
-    const userProfile = await microsoftGraphService.getUserProfile(tokens.accessToken);
-    
-    // Calculate expiration time
-    const expiresAt = new Date(Date.now() + (tokens.expiresIn * 1000));
+    try {
+      console.log('Exchanging code for tokens...');
+      
+      // Exchange code for tokens
+      const tokens = await microsoftGraphService.exchangeCodeForTokens(code as string);
+      console.log('Tokens acquired successfully');
+      
+      // Get user profile
+      const userProfile = await microsoftGraphService.getUserProfile(tokens.accessToken);
+      console.log('User profile retrieved:', userProfile.displayName);
+      
+      // Calculate expiration time
+      const expiresAt = new Date(Date.now() + (tokens.expiresIn * 1000));
 
-    // Update client with tokens
-    await databaseService.updateClientTokens(
-      clientId,
-      tokens.accessToken,
-      tokens.refreshToken,
-      expiresAt
-    );
+      // Update client with tokens
+      await databaseService.updateClientTokens(
+        clientId,
+        tokens.accessToken,
+        tokens.refreshToken,
+        expiresAt
+      );
+      console.log('Client tokens updated');
 
-    // Set up webhook subscription
-    const webhookUrl = `${process.env.WEBHOOK_BASE_URL}/api/webhook/microsoft/${clientId}`;
-    const subscriptionId = await microsoftGraphService.createWebhookSubscription(
-      tokens.accessToken,
-      webhookUrl
-    );
+      // Try to set up webhook subscription (optional for basic functionality)
+      try {
+        const webhookUrl = `${appUrls.backend}/api/webhook/microsoft/${clientId}`;
+        console.log('Setting up webhook:', webhookUrl);
+        
+        const subscriptionId = await microsoftGraphService.createWebhookSubscription(
+          tokens.accessToken,
+          webhookUrl
+        );
 
-    // Save webhook subscription
-    await databaseService.saveWebhookSubscription({
-      clientId,
-      subscriptionId,
-      resource: 'me/messages',
-      expirationTime: new Date(Date.now() + (24 * 60 * 60 * 1000)), // 24 hours
-    });
+        await databaseService.saveWebhookSubscription({
+          clientId,
+          subscriptionId,
+          resource: 'me/messages',
+          expirationTime: new Date(Date.now() + (24 * 60 * 60 * 1000)),
+        });
+        console.log('Webhook subscription created:', subscriptionId);
+      } catch (webhookError) {
+        console.error('Webhook setup failed (continuing anyway):', webhookError);
+        // Don't fail the whole flow if webhook fails
+      }
 
-    // Generate JWT for client
-    const jwtToken = jwt.sign(
-      { clientId, email: userProfile.mail || userProfile.userPrincipalName },
-      process.env.JWT_SECRET!,
-      { expiresIn: '7d' }
-    );
+      // Success redirect
+      console.log('OAuth flow completed successfully');
+      res.redirect(`${appUrls.frontend}/?client=${clientId}&connected=true`);
 
-    res.json({
-      success: true,
-      message: 'Microsoft 365 integration completed successfully',
-      user: {
-        name: userProfile.displayName,
-        email: userProfile.mail || userProfile.userPrincipalName,
-      },
-      token: jwtToken,
-      webhookSubscription: subscriptionId,
-    });
+    } catch (tokenError) {
+      console.error('Token exchange failed:', tokenError);
+      res.redirect(`${appUrls.frontend}/?error=token_exchange_failed`);
+    }
 
   } catch (error) {
-    console.error('Error handling OAuth callback:', error);
-    res.status(500).json({ error: 'Failed to complete authorization' });
+    console.error('OAuth callback error:', error);
+    const appUrls = getAppUrls();
+    res.redirect(`${appUrls.frontend}/?error=callback_failed`);
   }
 });
 
